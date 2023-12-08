@@ -3,7 +3,8 @@ import numpy as np
 import mne
 from mne.preprocessing import ICA
 from pyprep.find_noisy_channels import NoisyChannels
-from IPython import display
+from ._utils import *
+from ._preprocess import *
 
 def get_fp1_subs(data_path, sub_num):  
     """  
@@ -16,7 +17,7 @@ def get_fp1_subs(data_path, sub_num):
             print(sub_id, save_fname_fif)  
             break  
 
-    eeg_data_raw_file = os.path.join(data_path, sub_id, next(subfile for subfile in os.listdir(os.path.join(data_path,sub_id)) if (subfile.endswith('.edf','.EDF'))))  
+    eeg_data_raw_file = os.path.join(data_path, sub_id, next(subfile for subfile in os.listdir(os.path.join(data_path,sub_id)) if (subfile.endswith(('.edf','.EDF')))))  
 
     # read data, set EOG channel, and drop unused channels
     print(f"{sub_id}\nreading raw file...")

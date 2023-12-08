@@ -19,9 +19,47 @@ def set_montage(mne_obj, montage_path):
     Set custom montage for Raw or Epochs object.  
     """  
     relative_path = os.path.join(os.path.dirname(__file__),montage_path)
-    # relative_path = os.path.join('../../Lab code/wanglab_eeg/montages', montage_path)
-    custom_montage = mne.channels.read_custom_montage(relative_path)  
-    mne_obj.set_montage(custom_montage)  
+    if os.path.splitext(montage_path)[1]=='.xml': # gTec
+        montage = mne.channels.read_dig_egi(relative_path)  
+    elif os.path.splitext(montage_path)[1]=='.sfp': # Compumedics
+        montage = mne.channels.read_montage_fname(relative_path)  
+    mne_obj.set_montage(montage)  
+
+def get_time_window(peri_stim_time_win=None):
+    """
+    Get the tmin,tmax,bmax for any custom time window.
+    Also get the custom save path.
+    """    
+    bmax=0.
+    if peri_stim_time_win==None:
+        t_win = float(input("Please enter the peri-stimulus time window."+
+        "\nEx: '0 (default)' = [-0.2,0.8], '2' = [-1.0,1.0], etc...\n\n>> "))
+    else: 
+        t_win = float(peri_stim_time_win)
+        
+    if t_win==0.:
+        tmin,tmax = -0.2,0.8
+        time_win_path=''
+    else:
+        tmin,tmax = -t_win/2,t_win/2
+    print(f"[{tmin},{bmax},{tmax}]")
+    time_win_path=f'{int(t_win)}_sec_time_window/'
+    # print(time_win_path)
+    return (tmin,bmax,tmax),time_win_path
+
+def make_sub_time_win_path(sub_id,save_path_cont,save_path_zepo,
+                          include_zepochs=True):
+    """
+    Make a subject's time window data path
+    """
+    subpath_cont =  os.path.join(save_path_cont,sub_id)
+    if not os.path.exists(subpath_cont): # continuous
+        os.mkdir(subpath_cont)
+    if include_zepochs:
+        subpath_zepo =  os.path.join(save_path_zepo,sub_id)
+        if not os.path.exists(subpath_zepo): # zepochs
+            os.mkdir(subpath_zepo)
+    return subpath_cont,subpath_zepo
 
 def to_raw(data_path, sub_id, save_path):  
     """  
@@ -30,8 +68,8 @@ def to_raw(data_path, sub_id, save_path):
     sub_id=''
     for folder in os.listdir(data_path):  
         if folder.startswith(sub_id):  
-            sub_id = folder  
-            save_fname_fif = sub_id[:3] + '_preprocessed-raw.fif'  
+            sub_id = folder.split()[0]
+            save_fname_fif = sub_id + '_preprocessed-raw.fif'  
             print(sub_id, save_fname_fif)  
             break  
     
@@ -40,7 +78,8 @@ def to_raw(data_path, sub_id, save_path):
     # read data, set EOG channel, and drop unused channels
     print(f"{sub_id}\nreading raw file...")
     raw = mne.io.read_raw_edf(eeg_data_raw_file)  
-    
+
+    montage_fname = '../montages/Hydro_Neo_Net_64_xyz_cms_No_FID.sfp'
     Fp1_eog_flag=0
     # 32 channel case
     if 'X' in raw.ch_names and len(raw.ch_names)<64:  
@@ -51,30 +90,34 @@ def to_raw(data_path, sub_id, save_path):
         non_eeg_chs += ['Oth4'] if 'Oth4' in raw.ch_names else []  
     
         raw.drop_channels(non_eeg_chs)
-        custom_montage = '../montages/Hydro_Neo_Net_32_xyz_cms_No_Fp1.sfp'
+        montage_fname = '../montages/Hydro_Neo_Net_32_xyz_cms_No_Fp1.sfp'
     
     # 64 channel case
     else:
         wrong_64_mtg_flag=0
-        if "FT7" in raw.ch_names:
+        if {'FT7', 'P05'}.issubset(set(raw.ch_names)):  
             wrong_64_mtg_flag=1
             eog_adj = 4
-        else:
+        elif 'VEO' in raw.ch_names or 'VEOG' in raw.ch_names:  
             eog_adj = 5
-        if 'VEO' in raw.ch_names or 'VEOG' in raw.ch_names:  
             raw = load_raw_data(eeg_data_raw_file, 'VEO' if 'VEO' in raw.ch_names else 'VEOG')  
             non_eeg_chs = ['HEOG', 'EKG', 'EMG', 'Trigger'] if 'HEOG' in raw.ch_names else ['HEO', 'EKG', 'EMG', 'Trigger']  
             raw.drop_channels(non_eeg_chs)
-            custom_montage = '../montages/Hydro_Neo_Net_64_xyz_cms_No_FID.sfp'
+            montage_fname = '../montages/Hydro_Neo_Net_64_xyz_cms_No_FID.sfp'
     
         if "EEG66" in raw.ch_names:
             non_eeg_chs = ['EEG66','EEG67','EEG68','EEG69']
             raw.drop_channels(non_eeg_chs)
-        
+
+        # For 64 channel gTec cap
+        if 'AF8' in raw.ch_names:
+            montage_fname = '../montages/gHIamp_64ch.xml'
+            raw.pick(range(62))
+            
         # make adjustment for wrong montage subjects
         if wrong_64_mtg_flag:
             raw.drop_channels(['FT7','FT8','PO5','PO6']) # for subjects C24, 055, 056, 047
-            custom_montage = '../montages/Hydro_Neo_Net_64_xyz_cms_No_FID_Caps.sfp' 
+            montage_fname = '../montages/Hydro_Neo_Net_64_xyz_cms_No_FID_Caps.sfp' 
     
     # 007 and 010 had extremely noisy data near the ends of their recordings.
     # Crop it out.
@@ -84,7 +127,8 @@ def to_raw(data_path, sub_id, save_path):
         raw.crop(tmax=1997.8)
     
     print(f"{sub_id}\nsetting custom montage...")
-    set_montage(raw,custom_montage)
+    print(montage_fname)
+    set_montage(raw, montage_fname)
     
     # high level inspection
     print(raw.ch_names)
@@ -151,8 +195,8 @@ def to_raw(data_path, sub_id, save_path):
     elif 'VEOG' in raw.ch_names:
         raw.drop_channels('VEOG')
     elif Fp1_eog_flag:
-        custom_montage = '../montages/Hydro_Neo_Net_32_xyz_cms_No_Fp1.sfp'
-        set_montage(raw,custom_montage)
+        montage_fname = '../montages/Hydro_Neo_Net_32_xyz_cms_No_Fp1.sfp'
+        set_montage(raw,montage_fname)
     
     raw.save(save_path+save_fname_fif, 
              verbose=True, overwrite=True)
